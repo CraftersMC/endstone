@@ -87,13 +87,13 @@ NetworkPeer::DataStatus NetworkConnection::receivePacket(std::string &receive_bu
         ReadOnlyBinaryStream read_stream(e.getPayload(), false);
         auto packet_size = read_stream.getView().size() - read_stream.getReadPointer();
         if (auto result = packet->checkSize(packet_size, true); !result.ignoreError()) {
-            server.getLogger().error("PacketReceiveEvent: Bad packet size: {}", packet_size);
+            server.getLogger().error("PacketReceiveEvent: Invalid packet size {} for packet id: {}", packet_size, static_cast<int>(packet_id));
             continue;
         }
 
         if (auto result = packet->readNoHeader(read_stream, network.getPacketReflectionCtx(), sub_client_id);
             !result.ignoreError()) {
-            server.getLogger().error("PacketReceiveEvent: Bad packet!");
+            server.getLogger().error("PacketReceiveEvent: Failed to decode packet id: {}", static_cast<int>(packet_id));
             continue;
         }
 
