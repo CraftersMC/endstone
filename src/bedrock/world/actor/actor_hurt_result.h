@@ -14,11 +14,21 @@
 
 #pragma once
 
-#include "bedrock/platform/brstd/function_ref.h"
-#include "bedrock/shared_ptr.h"
-#include "bedrock/world/level/block/block_type.h"
+#include <optional>
 
-class BlockTypeRegistry {
+class ActorHurtResult {
 public:
-    void forEachBlockType(brstd::function_ref<bool(BlockType const &)> callback);
+    static ActorHurtResult createHurt();
+    static ActorHurtResult createNotHurt();
+    static ActorHurtResult createDamaged(float damage);
+    ActorHurtResult &setHurt(bool was_hurt);
+    ActorHurtResult &setShouldAllowKnockback(bool should_do_knockback);
+    bool wasHurt() const;
+    std::optional<float> getDamage() const;
+    bool shouldAllowKnockback() const;
+
+private:
+    ActorHurtResult(std::variant<bool, float>);
+    std::variant<bool, float> hurt_or_damage_;
+    bool should_allow_knockback_;
 };

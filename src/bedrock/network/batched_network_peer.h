@@ -14,11 +14,22 @@
 
 #pragma once
 
-#include "bedrock/platform/brstd/function_ref.h"
-#include "bedrock/shared_ptr.h"
-#include "bedrock/world/level/block/block_type.h"
+#include <chrono>
 
-class BlockTypeRegistry {
+#include "bedrock/bedrock.h"
+#include "network_identifier.h"
+#include "network_peer.h"
+
+class BatchedNetworkPeer : public NetworkPeer {
 public:
-    void forEachBlockType(brstd::function_ref<bool(BlockType const &)> callback);
+    ~BatchedNetworkPeer() override;
+    ENDSTONE_HOOK void sendPacket(const std::string &data, Reliability reliability,
+                                  Compressibility compressible) override;
+
+protected:
+    ENDSTONE_HOOK DataStatus _receivePacket(std::string &out_data,
+                                            const PacketRecvTimepointPtr &timepoint_ptr) override;
+
+private:
+    [[nodiscard]] const NetworkIdentifier &getId() const;  // Endstone
 };

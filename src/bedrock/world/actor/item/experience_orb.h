@@ -14,11 +14,16 @@
 
 #pragma once
 
-#include "bedrock/platform/brstd/function_ref.h"
-#include "bedrock/shared_ptr.h"
-#include "bedrock/world/level/block/block_type.h"
+#include "bedrock/world/actor/actor.h"
 
-class BlockTypeRegistry {
+class ExperienceOrb : public Actor {
 public:
-    void forEachBlockType(brstd::function_ref<bool(BlockType const &)> callback);
+    enum class DropType : uint8_t {
+        NoType = 0,
+        FromBlock = 1,
+        FromMob = 2,
+        FromPlayer = 3,
+    };
+
+    static void spawnOrbs(BlockSource &block_source, const Vec3 &pos, int xp_value, DropType drop_type, Player *owner);
 };
