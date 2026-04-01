@@ -20,6 +20,7 @@
 #include "bedrock/network/packet/resource_packs_info_packet.h"
 #include "bedrock/network/packet/start_game_packet.h"
 #include "bedrock/network/raknet_connector.h"
+#include "bedrock/network/server_network_system.h"
 #include "endstone/core/level/level.h"
 #include "endstone/core/map/map_view.h"
 #include "endstone/core/player.h"
@@ -32,12 +33,8 @@
 namespace {
 void patchPacket(const StartGamePacket &packet)
 {
-    if (packet.getName() != "StartGamePacket") {
-        return;
-    }
-    const auto &server = entt::locator<endstone::core::EndstoneServer>::value();
-    const auto *level = static_cast<endstone::core::EndstoneLevel *>(server.getLevel());
-    if (level && !level->getHandle().isClientSideGenerationEnabled()) {
+    const auto &server = endstone::core::EndstoneServer::getInstance();
+    if (const auto *level = server.getEndstoneLevel(); level && !level->getHandle().isClientSideGenerationEnabled()) {
         auto &pk = const_cast<StartGamePacket &>(packet);
         pk.settings.setRandomSeed(0);
     }
@@ -45,19 +42,14 @@ void patchPacket(const StartGamePacket &packet)
 
 void patchPacket(const ResourcePacksInfoPacket &packet)
 {
-    if (packet.getName() != "ResourcePacksInfoPacket") {
-        return;
-    }
+    (void)packet;
     // TODO(refactor): inject content key here instead of adding to ServerNetworkHandler
 }
 
 void patchPacket(const ResourcePackStackPacket &packet)
 {
-    if (packet.getName() != "ResourcePackStackPacket") {
-        return;
-    }
     if (packet.texture_pack_required) {
-        const auto &server = entt::locator<endstone::core::EndstoneServer>::value();
+        const auto &server = endstone::core::EndstoneServer::getInstance();
         if (server.getAllowClientPacks()) {
             auto &pk = const_cast<ResourcePackStackPacket &>(packet);
             // false, otherwise the client will remove its own non-server-supplied resource packs.
@@ -68,10 +60,6 @@ void patchPacket(const ResourcePackStackPacket &packet)
 
 void patchPacket(const ClientboundMapItemDataPacket &packet, endstone::core::EndstonePlayer &player)
 {
-    if (packet.getName() != "ClientboundMapItemDataPacket") {
-        return;
-    }
-
     const auto &server = endstone::core::EndstoneServer::getInstance();
     auto *map = static_cast<endstone::core::EndstoneMapView *>(server.getMap(packet.getMapId().raw_id));
     if (!map) {
@@ -107,6 +95,29 @@ void patchPacket(const ClientboundMapItemDataPacket &packet, endstone::core::End
         }
     }
 }
+
+void patchPacket(Packet &packet, endstone::Player *player)
+{
+    switch (packet.getId()) {
+    case MinecraftPacketIds::StartGame:
+        patchPacket(static_cast<const StartGamePacket &>(packet));
+        break;
+    case MinecraftPacketIds::ResourcePacksInfo:
+        patchPacket(static_cast<const ResourcePacksInfoPacket &>(packet));
+        break;
+    case MinecraftPacketIds::ResourcePackStack:
+        patchPacket(static_cast<const ResourcePackStackPacket &>(packet));
+        break;
+    case MinecraftPacketIds::MapData:
+        if (player) {
+            patchPacket(static_cast<const ClientboundMapItemDataPacket &>(packet),
+                        static_cast<endstone::core::EndstonePlayer &>(*player));
+        }
+        break;
+    default:
+        break;
+    }
+}
 }  // namespace
 
 void BatchedNetworkPeer::sendPacket(const std::string &data, Reliability reliability, Compressibility compressible)
@@ -114,14 +125,16 @@ void BatchedNetworkPeer::sendPacket(const std::string &data, Reliability reliabi
     ReadOnlyBinaryStream stream(data, false);
     auto result = stream.getUnsignedVarInt().discardError();
     if (!result) {
-        const auto &server =  endstone::core::EndstoneServer::getInstance();
+        const auto &server = endstone::core::EndstoneServer::getInstance();
         server.getLogger().critical("BatchedNetworkPeer::sendPacket: Failed to parse raw packet header!");
         return;
     }
 
+    // Parse packet header
     auto header = PacketHeader::fromRaw(result.value());
     const auto &id = getId();
 
+    // Get player object - if exists
     const auto &server = endstone::core::EndstoneServer::getInstance();
     const auto *server_player =
         server.getServer().getMinecraft()->getServerNetworkHandler()->getServerPlayer(id, header.getSenderSubId());
@@ -130,38 +143,50 @@ void BatchedNetworkPeer::sendPacket(const std::string &data, Reliability reliabi
         player = &server_player->getEndstoneActor<endstone::core::EndstonePlayer>();
     }
 
-    // TODO(fixme): add patchPacket calls back
-    // switch (packet.getId()) {
-    // case MinecraftPacketIds::StartGame:
-    //     patchPacket(static_cast<const StartGamePacket &>(packet));
-    //     break;
-    // case MinecraftPacketIds::ResourcePacksInfo:
-    //     patchPacket(static_cast<const ResourcePacksInfoPacket &>(packet));
-    //     break;
-    // case MinecraftPacketIds::ResourcePackStack:
-    //     patchPacket(static_cast<const ResourcePackStackPacket &>(packet));
-    //     break;
-    // case MinecraftPacketIds::MapData:
-    //     if (player) {
-    //         patchPacket(static_cast<const ClientboundMapItemDataPacket &>(packet),
-    //                     static_cast<endstone::core::EndstonePlayer &>(*player));
-    //     }
-    //     break;
-    // default:
-    //     break;
-    // }
-
+    // Create packet send event
     auto payload = stream.getView().substr(stream.getReadPointer());
     endstone::PacketSendEvent e{player, static_cast<int>(header.getPacketId()), payload,
                                 endstone::core::EndstoneSocketAddress::fromNetworkIdentifier(id),
                                 static_cast<int>(header.getSenderSubId())};
+
+    // Patch specific outbound packets (deserialize -> modify -> re-serialize)
+    switch (header.getPacketId()) {
+    case MinecraftPacketIds::StartGame:
+    case MinecraftPacketIds::ResourcePacksInfo:
+    case MinecraftPacketIds::ResourcePackStack:
+    case MinecraftPacketIds::MapData: {
+        auto packet = MinecraftPackets::createPacket(header.getPacketId());
+        if (!packet) {
+            server.getLogger().critical("BatchedNetworkPeer::sendPacket: Unknown packet id: {}",
+                                        static_cast<int>(header.getPacketId()));
+            return;
+        }
+
+        auto &network = server.getServer().getNetwork();
+        if (!packet->readNoHeader(stream, network.getPacketReflectionCtx(), header.getSenderSubId()).ignoreError()) {
+            server.getLogger().critical("BatchedNetworkPeer::sendPacket: Failed to parse packet with id: {}",
+                                        static_cast<int>(packet->getId()));
+            return;
+        }
+
+        patchPacket(*packet, player);
+
+        BinaryStream out;
+        packet->writeWithSerializationMode(out, network.getPacketReflectionCtx(),
+                                           network.getPacketOverrides().getOverrideModeForPacket(packet->getId()));
+        e.setPayload(out.getBuffer());
+        break;
+    }
+    default:
+        break;
+    }
+
     server.getPluginManager().callEvent(e);
     if (e.isCancelled()) {
         return;
     }
 
     if (e.getPayload().data() != payload.data()) {
-        // Plugins have changed the payload, let's re-encode the packet
         BinaryStream out;
         header.write(out);
         out.writeRawBytes(e.getPayload());

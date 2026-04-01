@@ -38,6 +38,7 @@ public:
     void closeConnection(const NetworkIdentifier &id, const Connection::DisconnectFailReason reason,
                          const std::string &message_from_server);
     [[nodiscard]] const cereal::ReflectionCtx &getPacketReflectionCtx() const;
+    [[nodiscard]] IPacketSerializationController &getPacketOverrides() const { return *packet_overrides_; }  // Endstone
 
 protected:
     struct Dependencies;
