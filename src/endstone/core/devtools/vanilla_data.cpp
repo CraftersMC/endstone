@@ -136,6 +136,20 @@ void dumpItemData(VanillaData &data, const ::Level &level)
             data.item_tags[tag_name].push_back(name);
         }
 
+        nlohmann::json description_ids;
+        std::string default_description = item->buildDescriptionId(ItemDescriptor(*item, 0), nullptr);
+        description_ids["0"] = default_description;
+        for (int i = 1; i < 256; i++) {
+            if (!item->isValidAuxValue(i)) {
+                continue;
+            }
+            std::string stringified_key = std::to_string(i);
+            std::string per_aux_desc = item->buildDescriptionId(ItemDescriptor(*item, i), nullptr);
+            if (per_aux_desc == default_description) {
+                continue;
+            }
+            description_ids[stringified_key] = per_aux_desc;
+        }
         data.items[name] = {{"id", item->getId()},
                             {"attackDamage", item->getAttackDamage()},
                             {"armorValue", item->getArmorValue()},
@@ -146,7 +160,7 @@ void dumpItemData(VanillaData &data, const ::Level &level)
                             {"maxStackSize", item->getMaxStackSize(ItemDescriptor())},
                             {"furnaceBurnDuration", FurnaceBlockActor::getBurnDuration(::ItemStack(*item), 200)},
                             {"furnaceXPMultiplier", item->getFurnaceXPmultiplier(nullptr)},
-                            {"translationKey", item->buildDescriptionId(ItemDescriptor(*item, 0), nullptr)}};
+                            {"descriptionIds", description_ids}};
 
         if (const auto components = item->buildNetworkTag()) {
             ::CompoundTag tag;
