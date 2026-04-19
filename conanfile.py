@@ -37,7 +37,7 @@ class EndstoneRecipe(ConanFile):
 
     @property
     def _with_devtools(self):
-        return self.settings.os == "Windows"
+        return True
 
     def validate(self):
         check_min_cppstd(self, self._min_cppstd)
